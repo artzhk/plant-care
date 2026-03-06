@@ -1,13 +1,9 @@
 # Plant Care
-The plant care system is designed to build an interactive garden in your home, by providing ambient lightning or any
-other triggering mechanism to do not forget to take care of plants for people with Altheimers and other brain deseases.
+PlantCare is a home IoT system designed to help people with Alzheimer's and other cognitive conditions maintain their plants through ambient lighting and configurable reminder triggers. The system keeps track of various sensors parameters and creates and ambient contextual lightning around plants, orange - plant needs more sun, blue - plant need more water, green - plant is fine. 
 
-The current state is very bare prototype that displays possibilities and basic project structure. 
+The current state is a working prototype that demonstrates the core architecture and key integration patterns, including communication between ESP nodes and Home Assistant OS.
 
-Additionally the project server as know-how integrations with HA(Home assistant) OS and between nodes communication. 
-
-The design could be improved and simplifed, at the moment of creation I didn't have an LCD with I2C or additional OLED
-for master node, that is why I've built an I2C interface out of nano board.
+Notable design note: The master node lacks a native I2C display, so an Arduino Nano was repurposed to act as an I2C bridge — a practical hardware workaround documented here for reference.
 
 # Architecture overview
 
@@ -23,6 +19,31 @@ sensors                   subscribes
 ```
 
 Home assistant integration allows for automations, notifications and intergrations with other systems and hardware. 
+
+# Setup
+
+On first boot each node opens a captive portal (PlantCare-Master or PlantCare-Sensor) at 192.168.4.1. Connect to it and enter the WiFi credentials, HA IP, and for sensor nodes the master IP. Config is saved to LittleFS and the portal does not reappear after reboot.
+
+# Build
+Requires arduino-cli. The Makefile handles core/library installation automatically on first run.
+```
+  make master                  # compile master firmware
+  make sensor-1                # compile sensor firmware, node ID = 1
+  make sensor-2 HA_IP=192.168.1.10 MASTER_IP=192.168.1.20
+
+  make upload-master PORT=/dev/ttyUSB0
+  make upload-sensor-1 PORT=/dev/ttyUSB0
+
+  make compiledb-master        # generate compile_commands.json (for LSP)
+  make freeze-libs             # update libs.txt from currently installed libs
+```
+IPs can be baked in at compile time via HA_IP= and MASTER_IP=, or left as NULL to rely on the captive portal config.
+
+# MQTT
+
+Sensor nodes publish to `plants/sensor/<id>/state` every 2 seconds as `{"h":…,"t":…,"id":…,"m":…,"uv":…}` and send retained Home Assistant discovery payloads to homeassistant/sensor/plants_sensor<id>_{h,t,m,uv}/config on first connect. Availability is tracked on `plants/sensor/<id>/availability`. If MQTT is unreachable, sensor nodes fall back to HTTP POST to the master at /data.
+
+The master subscribes to `plants/sensor/+/state` and expires sensors silent for more than 30 seconds.
 
 # Components overview
 [Node Sensor](https://app.cirkitdesigner.com/project/ae44ae01-049e-4d11-9962-7d177c8b3517):
