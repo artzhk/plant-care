@@ -11,6 +11,7 @@ for master node, that is why I've built an I2C interface out of nano board.
 
 # Architecture overview
 
+```
                       +------------------------+
 Node Sensor - push -> | HA (home assistant) OS | 
                       +------------------------+
@@ -19,7 +20,7 @@ data from                    |
 sensors                   subscribes                        
                              |        
                         Master Node - serving as dashboard of collected data
-
+```
 
 Home assistant integration allows for automations, notifications and intergrations with other systems and hardware. 
 
