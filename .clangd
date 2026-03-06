@@ -1,0 +1,11 @@
+CompileFlags:
+  Compiler: /home/art/.arduino15/packages/arduino/tools/avr-gcc/7.3.0-atmel3.6.1-arduino7/bin/avr-g++
+  Add: [
+    "-std=gnu++17",
+    "-DNODE_MASTER",
+    #     "-DNODE_SENSOR",
+    #    "-DDISPLAY",
+    "-I./include",
+    "-I./src",
+    ]
+

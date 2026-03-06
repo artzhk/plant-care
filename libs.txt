@@ -1,0 +1,11 @@
+Adafruit\ BusIO
+Adafruit\ GFX\ Library
+Adafruit\ SSD1306
+DHT11
+light_CD74HC4067
+LiquidCrystal
+LittleFS_esp32
+PubSubClient
+SoftwareSerialTX
+WiFiManager
+
