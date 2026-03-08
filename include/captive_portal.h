@@ -247,7 +247,7 @@ static void captive_portal_bg() {
     snprintf(bg_portal_pass, sizeof(bg_portal_pass), "%08x", (unsigned)h);
 
     char ssid[20];
-    snprintf(ssid, sizeof(ssid), "PlantCare-S%u", (unsigned)NODE_ID);
+    snprintf(ssid, sizeof(ssid), "PlantCare-S%s", _XSTR(NODE_ID));
     WiFi.mode(WIFI_AP);
     WiFi.softAP(ssid, bg_portal_pass);
     dns.start(53, "*", IPAddress(192, 168, 4, 1));
