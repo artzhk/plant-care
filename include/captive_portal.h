@@ -32,37 +32,29 @@ static struct NodeConfig {
 // The buffer used to transfer configuration data
 static const uint8_t CONFIG_BUF_SIZE = 250;
 
-
-// ssid, pass, ha_ip, master_ip, display_only
-static const char PORTAL_HTML_EDIT[] PROGMEM = 
+// Pre-filled edit form — served by captive_portal_bg() so the user sees
+// current values without re-typing everything. Format args (NODE_SENSOR):
+//   ssid, pass, ha_ip, master_ip, checked_attr ("checked" | "")
+static const char PORTAL_HTML_EDIT[] PROGMEM =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>PlantCare "
     "Setup</title>"
     "<style>body{font-family:sans-serif;max-width:400px;margin:40px "
     "auto;padding:0 10px}"
     "label{display:block;margin-bottom:10px}"
     "input{width:100%;box-sizing:border-box;padding:6px;margin-top:2px}</style>"
-#if defined(NODE_SENSOR)
-    "</head><body><h2>Plant Master Setup</h2>"
-#endif  // NODE_SENSOR
-#if defined(NODE_MASTER)
-    "</head><body><h2>Plant Master Setup</h2>"
-#endif  // NODE_MASTER
+    "</head><body><h2>Plant Sensor Setup</h2>"
     "<form method=\"POST\" action=\"/save\">"
     "<label>WiFi SSID<input name=\"ssid\" maxlength=\"31\" value=\"%s\" required></label>"
-    "<label>WiFi Password<input value=\"%s\"type=\"password\" name=\"pass\" "
-    "maxlength=\"63\"></label>"
-    "<label>HA IP<input name=\"ha_ip\" value=\"%s\" maxlength=\"19\" "
-    "placeholder=\"192.168.1.100\" required></label>"
+    "<label>WiFi Password<input type=\"password\" name=\"pass\" value=\"%s\" maxlength=\"63\"></label>"
+    "<label>HA IP<input name=\"ha_ip\" value=\"%s\" maxlength=\"19\" placeholder=\"192.168.1.100\"></label>"
 #if defined(NODE_SENSOR)
-    "<label>MASTER IP<input name=\"master_ip\" value=\"%s\" maxlength=\"19\" "
-    "placeholder=\"192.168.1.100\" required></label>"
-    "<label>Only display mode <input type=\"checkbox\" name=\"display_only\" "
-    "value=\"%d\"\\></label>"
+    "<label>Master IP<input name=\"master_ip\" value=\"%s\" maxlength=\"19\" placeholder=\"192.168.1.100\"></label>"
+    "<label><input type=\"checkbox\" name=\"display_only\" %s>Display only mode</label>"
 #endif  // NODE_SENSOR
     "<input type=\"submit\" value=\"Save &amp; Restart\">"
     "</form></body></html>";
 
-// Simple web page
+// Blank form — used by start_config_portal() on first-time setup.
 static const char PORTAL_HTML[] PROGMEM =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>PlantCare "
     "Setup</title>"
@@ -70,23 +62,14 @@ static const char PORTAL_HTML[] PROGMEM =
     "auto;padding:0 10px}"
     "label{display:block;margin-bottom:10px}"
     "input{width:100%;box-sizing:border-box;padding:6px;margin-top:2px}</style>"
-#if defined(NODE_SENSOR)
-    "</head><body><h2>Plant Master Setup</h2>"
-#endif  // NODE_SENSOR
-#if defined(NODE_MASTER)
-    "</head><body><h2>Plant Master Setup</h2>"
-#endif  // NODE_MASTER
+    "</head><body><h2>Plant Sensor Setup</h2>"
     "<form method=\"POST\" action=\"/save\">"
     "<label>WiFi SSID<input name=\"ssid\" maxlength=\"31\" required></label>"
-    "<label>WiFi Password<input type=\"password\" name=\"pass\" "
-    "maxlength=\"63\"></label>"
-    "<label>HA IP<input name=\"ha_ip\" maxlength=\"19\" "
-    "placeholder=\"192.168.1.100\" required></label>"
+    "<label>WiFi Password<input type=\"password\" name=\"pass\" maxlength=\"63\"></label>"
+    "<label>HA IP<input name=\"ha_ip\" maxlength=\"19\" placeholder=\"192.168.1.100\"></label>"
 #if defined(NODE_SENSOR)
-    "<label>MASTER IP<input name=\"master_ip\" maxlength=\"19\" "
-    "placeholder=\"192.168.1.100\" required></label>"
-    "<label>Only display mode <input type=\"checkbox\" name=\"display_only\" "
-    "value=\"0\"\\></label>"
+    "<label>Master IP<input name=\"master_ip\" maxlength=\"19\" placeholder=\"192.168.1.100\"></label>"
+    "<label><input type=\"checkbox\" name=\"display_only\">Display only mode</label>"
 #endif  // NODE_SENSOR
     "<input type=\"submit\" value=\"Save &amp; Restart\">"
     "</form></body></html>";
@@ -96,8 +79,7 @@ static void save_config(const char* ssid, const char* pass, const char* ha_ip,
                         const char* master_ip, const bool display_only)
 #endif  // NODE_SENSOR
 #if defined(NODE_MASTER)
-    static void save_config(const char* ssid, const char* pass,
-                            const char* ha_ip)
+static void save_config(const char* ssid, const char* pass, const char* ha_ip)
 #endif  // NODE_MASTER
 {
   if (!LittleFS.begin()) return;
@@ -106,40 +88,40 @@ static void save_config(const char* ssid, const char* pass, const char* ha_ip,
   char buf[CONFIG_BUF_SIZE];
   snprintf(buf, sizeof(buf),
 #if defined(NODE_SENSOR)
-           "{\"ssid\":\"%s\",\"pass\":\"%s\",\"ha_ip\":\"%s\",\"master_ip\":\"%"
-           "s\",\"display_only\":%d}",
-           ssid, pass, ha_ip, master_ip, display_only);
+           "{\"ssid\":\"%s\",\"pass\":\"%s\",\"ha_ip\":\"%s\","
+           "\"master_ip\":\"%s\",\"display_only\":%d}",
+           ssid, pass, ha_ip, master_ip, (int)display_only);
 #endif  // NODE_SENSOR
 #if defined(NODE_MASTER)
-      "{\"ssid\":\"%s\",\"pass\":\"%s\",\"ha_ip\":\"%s\"}",
-      ssid, pass, ha_ip);
+           "{\"ssid\":\"%s\",\"pass\":\"%s\",\"ha_ip\":\"%s\"}",
+           ssid, pass, ha_ip);
 #endif  // NODE_MASTER
-      f.print(buf);
-      f.close();
+  f.print(buf);
+  f.close();
 }
 
+// Shared /save POST handler — used by both start_config_portal and
+// captive_portal_bg so save logic is not duplicated.
 static void save_endpoint(ESP8266WebServer& portal) {
-#if defined(NODE_MASTER)
   char ssid_buf[32], pass_buf[64], ha_buf[20];
-#elif defined(NODE_SENSOR)
-  char ssid_buf[32], pass_buf[64], ha_buf[20], master_buf[20];
-  bool display_only;
-  portal.arg("master_ip").toCharArray(master_buf, sizeof(master_buf));
-  display_only = portal.arg("display_only") == "0";
-#endif  // NODE_SENSOR
   portal.arg("ssid").toCharArray(ssid_buf, sizeof(ssid_buf));
   portal.arg("pass").toCharArray(pass_buf, sizeof(pass_buf));
   portal.arg("ha_ip").toCharArray(ha_buf, sizeof(ha_buf));
 
-#if defined(NODE_MASTER)
-  save_config(ssid_buf, pass_buf, ha_buf);
-#elif defined(NODE_SENSOR)
+#if defined(NODE_SENSOR)
+  char master_buf[20];
+  portal.arg("master_ip").toCharArray(master_buf, sizeof(master_buf));
+  // Unchecked HTML checkboxes send no key at all; hasArg() is the correct test.
+  const bool display_only = portal.hasArg("display_only");
   save_config(ssid_buf, pass_buf, ha_buf, master_buf, display_only);
 #endif  // NODE_SENSOR
+#if defined(NODE_MASTER)
+  save_config(ssid_buf, pass_buf, ha_buf);
+#endif  // NODE_MASTER
+
   portal.send(200, "text/html",
               "<html><body><h2>Saved. Rebooting...</h2></body></html>");
   delay(1000);
-  Serial1.println("Rebooting");
   ESP.restart();
 }
 
@@ -157,7 +139,6 @@ static void start_config_portal(std::function<void(const char*)> display)
   WiFi.softAP("PlantCare-Sensor");
 #endif  // NODE_SENSOR
 
-  // Confuguring and starting access point
   DNSServer dns;
   dns.start(53, "*", IPAddress(192, 168, 4, 1));
 
@@ -168,17 +149,13 @@ static void start_config_portal(std::function<void(const char*)> display)
 #endif  // NODE_SENSOR
 
   ESP8266WebServer portal(80);
-  // configuring mini frontend to be accessed
   portal.on("/", HTTP_GET,
             [&]() { portal.send_P(200, PSTR("text/html"), PORTAL_HTML); });
-  // save config logic
   portal.on("/save", HTTP_POST, [&]() { save_endpoint(portal); });
-  // not found fallback
   portal.onNotFound([&]() {
     portal.sendHeader("Location", "http://192.168.4.1/", true);
     portal.send(302, "text/plain", "");
   });
-  // starting the server
   portal.begin();
 
   while (true) {
@@ -190,8 +167,10 @@ static void start_config_portal(std::function<void(const char*)> display)
 
 /**
  * Loading config function:
- * true -  if the configuration can be loaded and all needed fields can be
- * accessed and are valid. false - otherwise
+ * true  — all required fields present and valid.
+ * false — otherwise (triggers captive portal on boot).
+ * display_only is optional: missing field defaults to false so old configs
+ * without the field are still accepted.
  */
 static bool load_config() {
   if (!LittleFS.begin()) return false;
@@ -202,6 +181,7 @@ static bool load_config() {
   f.close();
   buf[n] = '\0';
 
+  // Reads a quoted JSON string value into out[0..sz-1].
   auto extract_str = [](const char* src, const char* key, char* out,
                         size_t sz) -> bool {
     const char* p = strstr(src, key);
@@ -213,42 +193,95 @@ static bool load_config() {
     return true;
   };
 
+  // Reads a bare JSON boolean (true/false/0/1) into *out.
   auto extract_bool = [](const char* src, const char* key, bool* out) -> bool {
     const char* p = strstr(src, key);
     if (!p) return false;
     p += strlen(key);
-    if (strncmp(p, "true", 4) == 0 || strncmp(p, "1", 1) == 0) {
-      *out = true;
-      return true;
-    } else if (strncmp(p, "false", 5) == 0 || strncmp(p, "0", 1) == 0) {
-      *out = false;
-      return true;
-    }
+    if (strncmp(p, "true", 4) == 0 || *p == '1') { *out = true;  return true; }
+    if (strncmp(p, "false", 5) == 0 || *p == '0') { *out = false; return true; }
     return false;
   };
 
-  auto extract = [&](const char* src, const char* key, void* out,
-                     size_t sz) -> bool {
-    if (strstr(key, "display_only")) {
-      return extract_bool(src, key, (bool*)out);
-    } else {
-      return extract_str(src, key, (char*)out, sz);
-    }
-  };
-
-  bool ok = 1;
-  ok &= extract(buf, "\"ssid\":\"", node_cfg.ssid, sizeof(node_cfg.ssid));
-  ok &= extract(buf, "\"pass\":\"", node_cfg.pass, sizeof(node_cfg.pass));
+  bool ok = true;
+  ok &= extract_str(buf, "\"ssid\":\"", node_cfg.ssid, sizeof(node_cfg.ssid));
+  ok &= extract_str(buf, "\"pass\":\"", node_cfg.pass, sizeof(node_cfg.pass));
+  ok &= extract_str(buf, "\"ha_ip\":\"", node_cfg.ha_ip, sizeof(node_cfg.ha_ip));
 #if defined(NODE_SENSOR)
-  ok &= extract(buf, "\"master_ip\":\"", node_cfg.master_ip,
-                sizeof(node_cfg.master_ip));
-  ok &= extract(buf, "\"display_only\":", &node_cfg.display_only,
-                sizeof(node_cfg.display_only));
+  ok &= extract_str(buf, "\"master_ip\":\"", node_cfg.master_ip,
+                    sizeof(node_cfg.master_ip));
+  // display_only is optional — missing field (old config) keeps default false.
+  node_cfg.display_only = false;
+  extract_bool(buf, "\"display_only\":", &node_cfg.display_only);
 #endif  // NODE_SENSOR
-  ok &= extract(buf, "\"ha_ip\":\"", node_cfg.ha_ip, sizeof(node_cfg.ha_ip));
 
   return ok;
 }
+
+#if defined(NODE_SENSOR)
+
+// Written once by captive_portal_bg() on first call; read by role_sensor.cpp's
+// display() to show the AP password on the OLED.
+static char bg_portal_pass[9];
+
+// Called every role_loop() iteration while in display-only mode.
+// On the first call: derives a per-node AP password (FNV-1a of NODE_ID +
+// gateway IP), starts the soft-AP, and registers routes including a pre-filled
+// edit form so the user can reconfigure without re-typing every field.
+// Subsequent calls are cheap: one DNS drain + one HTTP client poll.
+static void captive_portal_bg() {
+  static bool initialized = false;
+  static DNSServer dns;
+  static ESP8266WebServer portal_srv(80);
+
+  if (!initialized) {
+    // FNV-1a over NODE_ID byte then the AP gateway string — deterministic,
+    // per-node, no heap allocation.
+    uint32_t h = 2166136261UL;
+    h ^= (uint8_t)NODE_ID;
+    h *= 16777619UL;
+    for (const char* p = "192.168.4.1"; *p; ++p) {
+      h ^= (uint8_t)*p;
+      h *= 16777619UL;
+    }
+    snprintf(bg_portal_pass, sizeof(bg_portal_pass), "%08x", (unsigned)h);
+
+    char ssid[20];
+    snprintf(ssid, sizeof(ssid), "PlantCare-S%u", (unsigned)NODE_ID);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ssid, bg_portal_pass);
+    dns.start(53, "*", IPAddress(192, 168, 4, 1));
+
+    // Serve the edit form pre-filled with the values currently in node_cfg.
+    portal_srv.on("/", HTTP_GET, []() {
+      // Static so this ~900-byte buffer is not on the stack every request.
+      static char edit_buf[900];
+      snprintf_P(edit_buf, sizeof(edit_buf), PORTAL_HTML_EDIT,
+                 node_cfg.ssid,
+                 node_cfg.pass,
+                 node_cfg.ha_ip,
+                 node_cfg.master_ip,
+                 node_cfg.display_only ? "checked" : "");
+      portal_srv.send(200, "text/html", edit_buf);
+    });
+
+    portal_srv.on("/save", HTTP_POST,
+                  []() { save_endpoint(portal_srv); });
+
+    portal_srv.onNotFound([]() {
+      portal_srv.sendHeader("Location", "http://192.168.4.1/", true);
+      portal_srv.send(302, "text/plain", "");
+    });
+
+    portal_srv.begin();
+    initialized = true;
+  }
+
+  dns.processNextRequest();
+  portal_srv.handleClient();
+}
+
+#endif  // NODE_SENSOR
 
 #endif  // CAPTIVE_PORTAL_H
 #endif  // NODE_SENSOR || NODE_MASTER

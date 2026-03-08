@@ -70,9 +70,6 @@
 
 static uint8_t constexpr SCREEN_WIDTH = 128;
 static uint8_t constexpr SCREEN_HEIGHT = 64;
-static char bg_portal_pass[9];
-
-static DNSServer dns;
 
 char* cfg_ha_ip = nullptr;
 char* cfg_master_ip = nullptr;
@@ -431,36 +428,9 @@ void role_setup() {
 
   cfg_display_only = &node_cfg.display_only;
   if (*cfg_display_only) {
-    // FNV-1a hash
-    uint32_t h = 2166136261UL;
-    h ^= ID;
-    h *= 16777619UL;
-    for (const char* p = "192.168.4.1"; *p; ++p) {
-      h ^= (uint8_t)(*p);
-      h *= 16777619UL;
-    }
-
-    snprintf(bg_portal_pass, sizeof(bg_portal_pass), "%08x", (unsigned)h);
-
-    char ssid[20];
-    snprintf(ssid, sizeof(ssid), "PlantCare-S%s", _XSTR(NODE_ID));
-
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(ssid, bg_portal_pass);
+    // AP IP is fixed; captive_portal_bg() will start the AP + server on the
+    // first role_loop() iteration. Just set ip for display() and return.
     ip = IPAddress(192, 168, 4, 1);
-    dns.start(53, "*", ip);
-
-    server.on("/", HTTP_GET, []() {
-      char page_buf[512];
-
-      snprintf_P(page_buf, sizeof(page_buf), PORTAL_HTML_EDIT, node_cfg.ssid,
-                 bg_portal_pass, node_cfg.ha_ip, node_cfg.master_ip,
-                 *cfg_display_only);
-      server.send(200, PSTR("text/html"), page_buf);
-    });
-
-    server.begin();
-    display(F("Display-only mode\nNo WiFi or MQTT"));
     return;
   }
 
@@ -479,13 +449,13 @@ void role_setup() {
   display(F("Starting WIFI"));
   WiFi.begin(node_cfg.ssid, node_cfg.pass);
 
-  // Awaiting for a wifi connect
-  static uint32_t last_connected_try = 0;
-  uint32_t now = millis();
-  while (WiFi.status() != WL_CONNECTED && !*cfg_display_only) {
-    if ((uint32_t)(now - last_connected_try) >= 10'000UL) {
-      last_connected_try = now;
-      display(F("WiFi connection failed, \nserving captive portal..."));
+  // Wait up to 30 s for connection. millis() is re-sampled each iteration so
+  // the timeout is wall-clock accurate despite the 2 s delay inside the loop.
+  const uint32_t wifi_start_ms = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    // start config portal after 30 sec of retrying
+    if ((uint32_t)(millis() - wifi_start_ms) >= 30'000UL) {
+      display(F("WiFi failed\nCheck config..."));
       start_config_portal([](const char* s) { display(s); });
       return;
     }
@@ -524,7 +494,8 @@ static inline void read_and_display(const uint32_t delay_ms) {
 
 void role_loop() {
   if (*cfg_display_only) {
-    server.handleClient();
+    // starts AP + server on first call, then handles DNS + HTTP
+    captive_portal_bg();
     read_and_display(2000);
     return;
   }
