@@ -30,7 +30,25 @@ ARDUINO_DIR := $(HOME)/.arduino15
 ARDUINO_CFG := $(ARDUINO_DIR)/arduino-cli.yaml
 
 
-.PHONY: compile compile-master compile-display compile-sensor upload compiledb prerequisites clear
+.PHONY: help compile compile-master compile-display compile-sensor upload compiledb prerequisites clear
+
+help: 
+	@echo "Usage: make [target]"
+	@echo "Targets:"
+	@echo "  compile-master       Compile the master node firmware"
+	@echo "  compile-display      Compile the display node firmware"
+	@echo "  compile-sensor-1    Compile the sensor node 1 firmware"
+	@echo "  compile-sensor-2    Compile the sensor node 2 firmware"
+	@echo "  upload-master        Upload the master node firmware"
+	@echo "  upload-display       Upload the display node firmware"
+	@echo "  upload-sensor-1     Upload the sensor node 1 firmware"
+	@echo "  upload-sensor-2     Upload the sensor node 2 firmware"
+	@echo "  compiledb            Generate compile_commands.json for all nodes"
+	@echo "  compiledb-master     Generate compile_commands.json for master node"
+	@echo "  compiledb-display    Generate compile_commands.json for display node"
+	@echo "  compiledb-sensor     Generate compile_commands.json for sensor nodes"
+	@echo "  prerequisites        Install necessary cores and libraries"
+	@echo "  clear                Clean build artifacts and compile_commands.json"
 
 master:  NODETYPE = NODE_MASTER
 master:  BOARD    = esp8266:esp8266:nodemcuv2

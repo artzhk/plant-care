@@ -70,9 +70,15 @@
 
 static uint8_t constexpr SCREEN_WIDTH = 128;
 static uint8_t constexpr SCREEN_HEIGHT = 64;
+static char bg_portal_pass[9];
+
+static DNSServer dns;
 
 char* cfg_ha_ip = nullptr;
 char* cfg_master_ip = nullptr;
+bool* cfg_display_only = nullptr;
+
+static IPAddress ip;
 
 #define OLED_RESET -1
 #define SCREEN_ADDRESS 0x3C
@@ -321,13 +327,16 @@ static void display() {
   oled.println(line);
   snprintf(line, sizeof(line), "M:%d L:%d", hw390_val, cjmcu_val);
   oled.println(line);
-  IPAddress ip = WiFi.localIP();
   snprintf(line, sizeof(line), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
   oled.println(line);
   snprintf(line, sizeof(line), "Sensor ID: %s", _XSTR(NODE_ID));
   oled.println(line);
   snprintf(line, sizeof(line), "heap:%u", ESP.getFreeHeap());
   oled.println(line);
+  if (*cfg_display_only) {
+    snprintf(line, sizeof(line), "PASS:%s", bg_portal_pass);
+    oled.println(line);
+  }
   oled.display();
 }
 
@@ -403,6 +412,7 @@ static void push_state() {
 void role_setup() {
   Wire.begin(D2, D1);
   Wire.setClock(I2C_HZ);
+  Serial.begin(115200);
   // TODO put this and other begin to the start of the function
   if (!oled.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println(F("OLED alocation failed"));
@@ -412,9 +422,6 @@ void role_setup() {
     start_config_portal([](const char* s) { display(s); });
   }
 
-  cfg_ha_ip = node_cfg.ha_ip;
-  cfg_master_ip = node_cfg.master_ip;
-
   // Setup RGB out
   pinMode(RED_LED_PIN, OUTPUT);
   pinMode(GREEN_LED_PIN, OUTPUT);
@@ -422,7 +429,44 @@ void role_setup() {
   analogWriteRange(1023);
   led_set_rgb(0, 0, 0);
 
-  Serial.begin(115200);
+  cfg_display_only = &node_cfg.display_only;
+  if (*cfg_display_only) {
+    // FNV-1a hash
+    uint32_t h = 2166136261UL;
+    h ^= ID;
+    h *= 16777619UL;
+    for (const char* p = "192.168.4.1"; *p; ++p) {
+      h ^= (uint8_t)(*p);
+      h *= 16777619UL;
+    }
+
+    snprintf(bg_portal_pass, sizeof(bg_portal_pass), "%08x", (unsigned)h);
+
+    char ssid[20];
+    snprintf(ssid, sizeof(ssid), "PlantCare-S%s", _XSTR(NODE_ID));
+
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ssid, bg_portal_pass);
+    ip = IPAddress(192, 168, 4, 1);
+    dns.start(53, "*", ip);
+
+    server.on("/", HTTP_GET, []() {
+      char page_buf[512];
+
+      snprintf_P(page_buf, sizeof(page_buf), PORTAL_HTML_EDIT, node_cfg.ssid,
+                 bg_portal_pass, node_cfg.ha_ip, node_cfg.master_ip,
+                 *cfg_display_only);
+      server.send(200, PSTR("text/html"), page_buf);
+    });
+
+    server.begin();
+    display(F("Display-only mode\nNo WiFi or MQTT"));
+    return;
+  }
+
+  cfg_ha_ip = node_cfg.ha_ip;
+  cfg_master_ip = node_cfg.master_ip;
+
   Serial.print(F("Reset: "));
   Serial.println(ESP.getResetReason());
   {
@@ -436,19 +480,27 @@ void role_setup() {
   WiFi.begin(node_cfg.ssid, node_cfg.pass);
 
   // Awaiting for a wifi connect
-  while (WiFi.status() != WL_CONNECTED) {
+  static uint32_t last_connected_try = 0;
+  uint32_t now = millis();
+  while (WiFi.status() != WL_CONNECTED && !*cfg_display_only) {
+    if ((uint32_t)(now - last_connected_try) >= 10'000UL) {
+      last_connected_try = now;
+      display(F("WiFi connection failed, \nserving captive portal..."));
+      start_config_portal([](const char* s) { display(s); });
+      return;
+    }
     display(F("Awaiting connection"));
     delay(2000);
     Serial.print(F("."));
   }
 
+  ip = WiFi.localIP();
   // Serial print ip
   Serial.print(F("\nIP: "));
-  Serial.print(WiFi.localIP());
+  Serial.print(ip);
 
   // Printing current nodes ip
   char ip_buf[16];
-  IPAddress ip = WiFi.localIP();
   snprintf(ip_buf, sizeof(ip_buf), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
   display(ip_buf);
 
@@ -458,38 +510,45 @@ void role_setup() {
   mqtt_ensure_connected();
 }
 
-// TODO: Some additional private methods to post/preprocess dififrent sensors
-// and logic
-void rgb() { rgb_update(millis()); }
+static inline void read_and_display(const uint32_t delay_ms) {
+  static uint32_t last_push_ms = 0;
+  const uint32_t now = millis();
+  if ((uint32_t)(now - last_push_ms) >= delay_ms) {
+    last_push_ms = now;
+    read_sensors();
+    rgb_update(millis());
+    push_state();
+    display();
+  }
+}
 
 void role_loop() {
+  if (*cfg_display_only) {
+    server.handleClient();
+    read_and_display(2000);
+    return;
+  }
   if (WiFi.status() != WL_CONNECTED) {
     WiFi.reconnect();
     delay(2000);
     return;
   }
 
-  mqtt_ensure_connected();
-  if (mqtt.connected()) {
-    mqtt.loop();
-    static bool discovery_done = false;
-    if (!discovery_done) {
-      publish_discovery();
-      discovery_done = true;
+  if (cfg_ha_ip && cfg_ha_ip[0] != '\0') {
+    mqtt_ensure_connected();
+    if (mqtt.connected()) {
+      mqtt.loop();
+      static bool discovery_done = false;
+      if (!discovery_done) {
+        publish_discovery();
+        discovery_done = true;
+      }
     }
   }
 
   server.handleClient();
 
-  static uint32_t last_push_ms = 0;
-  const uint32_t now = millis();
-  if ((uint32_t)(now - last_push_ms) >= 2000ul) {
-    last_push_ms = now;
-    read_sensors();
-    rgb();
-    push_state();
-    display();
-  }
+  read_and_display(2000);
 }
 
 #endif

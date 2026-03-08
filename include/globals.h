@@ -45,6 +45,7 @@ static const char cross_nodes_state_fmt[] =
 extern char* cfg_ha_ip;
 
 #if defined(NODE_SENSOR)
+extern bool* cfg_display_only;
 extern char* cfg_master_ip;
 static constexpr uint8_t ID = NODE_ID;
 static const char MQTT_CLIENT_ID[] PROGMEM = "sensor" _XSTR(NODE_ID);
